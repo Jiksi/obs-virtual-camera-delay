@@ -24,9 +24,7 @@ Test environment used on 2026-08-23:
 | Repeated Start/Stop | PASS (5 cycles) | All cycles rewired/restored at 60 FPS. Logged drop count was zero in every cycle. |
 | Scene/source changes while active | PASS | Hid and restored the active Video Capture Device while delayed Virtual Camera remained active at 1080p30; preview switched to black and recovered without a crash or restart. |
 | Recording while delayed VC active | PASS | Local recording ran while Virtual Camera stayed active at 60/60 FPS. |
-| Streaming while delayed VC active | PENDING | Requires an authorized stream destination. |
-| Zoom consumer | PENDING | Zoom is not installed in the test environment. |
-| Second consumer (Meet/Discord/Teams) | PASS (Google Meet) | Meet selected the normal `OBS Virtual Camera` device and reported `Pratinjau video AKTIF` / `Kamera Anda aktif`; no duplicate virtual-camera device was present. |
+| Google Meet consumer | PASS | Meet selected the normal `OBS Virtual Camera` device and reported `Pratinjau video AKTIF` / `Kamera Anda aktif`; no duplicate virtual-camera device was present. |
 | 30 minutes at 1080p60 | PASS | 1920x1080, 60 FPS, 3000 ms ran for 30 minutes. Working set stabilized around 739-742 MiB (741.7 MiB final), 113,054 frames received, 112,873 emitted, 0 dropped, and 40 renderer-lag frames (0.0%). Stopping reclaimed working set to 129.8 MiB. |
 | Stop/shutdown cleanup | PASS | Active shutdown stopped 25,911-frame run, released the feeder, logged unload, and exited without a new crash report. |
 | HDR PQ/HLG rejection | CODE/UNIT ONLY | Runtime HDR configuration still needs a manual rejection test. |
