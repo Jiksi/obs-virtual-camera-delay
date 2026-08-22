@@ -1,0 +1,30 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build plugin
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Configuration RelWithDebInfo
+
+      - name: Package plugin
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Configuration RelWithDebInfo
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-virtual-camera-delay-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
