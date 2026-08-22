@@ -32,7 +32,7 @@ Virtual Camera start, not during an active run.
 
 1. Close OBS Studio.
 2. From the GitHub Release **Assets**, download
-   `obs-virtual-camera-delay-v0.1.0-windows-x64.zip` and extract it once. Do not
+   `obs-virtual-camera-delay-0.1.0-windows-x64.zip` and extract it once. Do not
    download the automatically generated source-code archives.
 3. Copy the extracted `obs-virtual-camera-delay` directory into one of:
    - current user: `%APPDATA%\obs-studio\plugins\`
@@ -98,9 +98,24 @@ ctest --test-dir build-tests -C Release --output-on-failure
 ```
 
 CI runs both the portable core-test target and the full Windows build/package
-flow. See [the manual test matrix](docs/manual-test-matrix.md) for the release
-gate and [the integration design](docs/virtual-camera-integration.md) for the
-contributor architecture.
+flow. The artifact layout is also checked to prevent a ZIP-inside-ZIP download.
+
+## Release validation
+
+v0.1.0 was validated with OBS Studio 32.2.2 on Windows x64 (build 26200) using
+an NVIDIA GeForce 930MX with D3D11. The completed manual checks covered:
+
+- 720p30, 720p60, 1080p30, and 1080p60;
+- 0, 500, 1000, and 3000 ms delay settings;
+- five repeated Virtual Camera start/stop cycles and scene/source changes;
+- simultaneous local recording while the delayed Virtual Camera was active;
+- Google Meet using the normal **OBS Virtual Camera** device;
+- delay accuracy within one video frame at 720p30/3000 ms; and
+- a 30-minute 1080p60/3000 ms run with zero feeder drops and memory reclaimed
+  after stop.
+
+Runtime HDR rejection was not part of the manual matrix; HDR PQ/HLG remains an
+explicitly unsupported configuration guarded by the implementation and tests.
 
 ## Memory trade-off
 
@@ -135,6 +150,3 @@ memory is approximately `width * height * 1.5 * FPS * delay_seconds`.
 - Settings apply on the next Virtual Camera start.
 - The queue makes one CPU copy per input frame and one libobs async-source copy
   per emitted frame.
-- Consumer-app and long-duration results are tracked explicitly in
-  [the manual matrix](docs/manual-test-matrix.md); release claims must not exceed
-  its completed rows.

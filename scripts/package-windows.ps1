@@ -25,7 +25,7 @@ if (-not (Test-Path -LiteralPath $locale -PathType Leaf)) {
     throw "Locale data not found at expected install path: $locale"
 }
 
-$zip = Join-Path $DistRoot "obs-virtual-camera-delay-v$ProjectVersion-windows-x64.zip"
+$zip = Join-Path $DistRoot "obs-virtual-camera-delay-$ProjectVersion-windows-x64.zip"
 Remove-Item -Force -ErrorAction SilentlyContinue $zip
 Compress-Archive -Path (Join-Path $ReleaseRoot '*') -DestinationPath $zip -CompressionLevel Optimal
 Write-Host "Package created: $zip"
