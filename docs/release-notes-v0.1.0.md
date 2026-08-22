@@ -19,3 +19,5 @@ Initial Windows x64 release for OBS Studio 32.x.
 - Long delays use substantial RAM (about 534 MiB at 1080p60/3000 ms).
 
 Install and uninstall instructions are in the repository README.
+Download the named Windows x64 ZIP under **Assets** and extract it once; the
+automatically generated source-code archives are not install packages.
