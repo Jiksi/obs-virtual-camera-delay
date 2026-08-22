@@ -2,4 +2,4 @@
 
 #include <obs-module.h>
 
-const obs_source_info *GetVirtualCameraDelayFilterInfo();
+const obs_source_info *GetVirtualCameraDelaySourceInfo();

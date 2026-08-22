@@ -2,17 +2,17 @@ name: Windows Build
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # The OBS plugin template currently configures the VS 2022 generator.
+    runs-on: windows-2022
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build plugin
         shell: pwsh
@@ -23,7 +23,7 @@ jobs:
         run: ./scripts/package-windows.ps1 -Configuration RelWithDebInfo
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: obs-virtual-camera-delay-windows-x64
           path: dist/*.zip

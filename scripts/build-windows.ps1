@@ -82,7 +82,8 @@ include(helpers)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
 find_package(libobs REQUIRED)
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs)
+find_package(obs-frontend-api REQUIRED)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE OBS::libobs OBS::obs-frontend-api)
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
@@ -90,6 +91,8 @@ target_sources(
     src/plugin-main.cpp
     src/virtual-camera-delay.cpp
     src/virtual-camera-delay.hpp
+    src/virtual-camera-delay-controller.cpp
+    src/virtual-camera-delay-controller.hpp
 )
 
 target_compile_features(${CMAKE_PROJECT_NAME} PRIVATE cxx_std_17)
