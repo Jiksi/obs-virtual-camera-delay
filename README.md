@@ -12,6 +12,50 @@ Experimental OBS Studio video filter that keeps a queue of GPU-rendered frames a
 
 This keeps the normal Program/stream/recording path real-time while the dedicated Virtual Camera path is delayed.
 
+## Windows build
+
+Requirements:
+
+- Windows x64
+- PowerShell 7.2+
+- Git
+- CMake
+- Visual Studio 2022 with Desktop development with C++
+
+Clone the repository and run:
+
+```powershell
+pwsh -File .\scripts\build-windows.ps1
+```
+
+For a Release build:
+
+```powershell
+pwsh -File .\scripts\build-windows.ps1 -Configuration Release
+```
+
+The build script uses the official OBS plugin template as a disposable build workspace, downloads and verifies the required OBS dependencies, and copies the final plugin tree into:
+
+```text
+release\RelWithDebInfo\
+```
+
+The plugin DLL should be located under the generated `obs-virtual-camera-delay\bin\64bit` directory.
+
+To create a ZIP package after building:
+
+```powershell
+pwsh -File .\scripts\package-windows.ps1
+```
+
+The package is written to `dist\`.
+
+## Installing for a smoke test
+
+Close OBS first. Copy the contents of the generated release package into the matching OBS Studio installation directories. Keep the plugin DLL and its `data` directory together in the layout produced by the build.
+
+After restarting OBS, add **Virtual Camera Delay** as a video filter to a source or dedicated Virtual Camera scene. Start testing at `1000 ms` before increasing the delay.
+
 ## Current MVP limits
 
 - Video only.
@@ -22,18 +66,11 @@ This keeps the normal Program/stream/recording path real-time while the dedicate
 - No automatic Virtual Camera configuration yet.
 - Intended to prove the delayed-render path before optimizing storage.
 
-## Development approach
+## Build/CI approach
 
-Use this source inside the official `obsproject/obs-plugintemplate` bootstrap. The official template supplies the Windows build scripts, dependency bootstrap, packaging, and CI files.
+The repository keeps the plugin source small while `scripts/build-windows.ps1` bootstraps the current official `obsproject/obs-plugintemplate` build infrastructure into `.build/`. The temporary workspace is not committed.
 
-For an existing template project, copy:
-
-- `src/plugin-main.c`
-- `src/virtual-camera-delay.c`
-- `src/virtual-camera-delay.h`
-- locale files from `data/locale/`
-
-Then add `src/virtual-camera-delay.c` and the header to the template's `target_sources(...)`.
+GitHub Actions runs the same Windows build and packaging flow on pushes and pull requests to `main` and uploads the resulting ZIP as a workflow artifact.
 
 ## Next engineering milestones
 
