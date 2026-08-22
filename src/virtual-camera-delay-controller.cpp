@@ -51,12 +51,7 @@ public:
         obs_frontend_add_tools_menu_item(
             obs_module_text("VirtualCameraDelaySettings"), OpenSettings, this);
 
-        AttachOutput();
         loaded_ = true;
-
-        if (obs_frontend_virtualcam_active())
-            HandleVirtualCameraStarted();
-
         return true;
     }
 
@@ -118,6 +113,8 @@ private:
     {
         switch (event) {
         case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+            // The built-in Virtual Camera output is created by the frontend's
+            // output handler, which is not available while modules are loading.
             AttachOutput();
             if (obs_frontend_virtualcam_active())
                 HandleVirtualCameraStarted();
