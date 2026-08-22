@@ -1,105 +1,138 @@
 # OBS Virtual Camera Delay
 
-Experimental OBS Studio plugin exploring a dedicated delayed Virtual Camera
-output while leaving streaming and recording real-time.
+Windows x64 plugin that delays the built-in **OBS Virtual Camera** while
+streaming and recording stay real-time. No source filter and no second virtual
+camera driver are installed.
 
 ```text
-OBS Program ──> Stream / Recording (real-time)
-      |
-      └──> custom raw-video output ──> CPU delay queue ──> future OS sink
+                         +--> Stream / Recording (real-time)
+OBS selected VC media ---+
+                         +--> NV12 feeder --> timestamp queue --> private view
+                                                               |
+                                                               v
+                                                    OBS Virtual Camera output
+                                                               |
+                                                               v
+                                                   normal OBS Virtual Camera
 ```
 
-The plugin is frontend/output-oriented. It does **not** register a source or
-scene filter as its user-facing feature.
+## Supported v0.1.0 configuration
 
-## Current proof of concept
+- OBS Studio 32.x on Windows x64.
+- SDR video (Rec. 601, Rec. 709, or sRGB) converted to NV12.
+- Delay from 0 through 3000 ms; default 1000 ms.
+- Hard queue limit of 768 MiB. A resolution/FPS/delay combination that would
+  exceed it is clamped and reported in the OBS log.
+- Video only. Virtual Camera audio behavior remains controlled by OBS.
 
-This version targets OBS Studio 32.x on Windows x64. At module load it registers
-`delayed_virtual_camera_output`. Once the OBS frontend finishes loading, plugin
-code creates the output, connects it directly to Program video, and starts raw
-video capture.
+HDR PQ/HLG is rejected for v0.1.0. Settings changes take effect on the next
+Virtual Camera start, not during an active run.
 
-Incoming NV12 frames are copied into a timestamp-based delay queue. Frames that
-reach the configured delay boundary are counted and released from the queue. The
-first delayed frame produces an OBS log entry, providing a runtime smoke-test
-point for the new output path.
+## Install
 
-This milestone intentionally stops at the delayed-output boundary: it does not
-yet forward delayed frames to the Windows Virtual Camera shared-memory sink.
-That platform adapter is the next architectural layer. See
-[Virtual Camera integration](docs/virtual-camera-integration.md).
+1. Close OBS Studio.
+2. Download `obs-virtual-camera-delay-v0.1.0-windows-x64.zip` and extract it.
+3. Copy the extracted `obs-virtual-camera-delay` directory into one of:
+   - current user: `%APPDATA%\obs-studio\plugins\`
+   - all users (administrator required): `%PROGRAMDATA%\obs-studio\plugins\`
+4. Start OBS and confirm **Tools > Virtual Camera Delay Settings** exists.
 
-## Windows build
+The final path should contain:
+
+```text
+obs-studio/plugins/obs-virtual-camera-delay/
+|-- bin/64bit/obs-virtual-camera-delay.dll
+`-- data/locale/{en-US,id-ID}.ini
+```
+
+Do not install the plugin in both user and all-user locations. OBS gives the
+all-user bundle precedence, which can make an older copy appear to remain
+installed.
+
+To uninstall, close OBS and delete only the `obs-virtual-camera-delay` bundle
+directory from the location used above. The plugin does not install or remove
+the OBS Virtual Camera driver.
+
+## Use
+
+1. Open **Tools > Virtual Camera Delay Settings**.
+2. Enable delayed mode and choose 0–3000 ms.
+3. Click **Start Virtual Camera** in OBS.
+4. Select the existing **OBS Virtual Camera** device in the consuming app.
+
+The plugin briefly restarts the output internally after the initial click so it
+can insert the delayed private view. The OBS button remains in the active state.
+Stopping Virtual Camera flushes all queued RAM and restores the original media.
+
+The OBS log records the actual delay, resolution, expected RAM, clamping,
+unsupported color spaces, emitted/drop counts, and cleanup.
+
+## Build and test
 
 Requirements:
 
-- Windows x64
-- PowerShell 7.2+
-- Git
-- CMake
-- Visual Studio 2022 with Desktop development with C++
+- Windows x64 and PowerShell 7.2+
+- Git and CMake 3.28+
+- Visual Studio 2022 with **Desktop development with C++**
 
-Clone the repository and run:
+From a clean checkout:
 
 ```powershell
-pwsh -File .\scripts\build-windows.ps1
+pwsh -File .\scripts\build-windows.ps1 -Configuration RelWithDebInfo
+pwsh -File .\scripts\package-windows.ps1 -Configuration RelWithDebInfo
 ```
 
-For a Release build:
+The build script downloads hash-verified OBS 32.2.2 dependencies, runs the
+deterministic core tests, builds the DLL, and stages the install bundle under
+`release\RelWithDebInfo`. Packaging validates the DLL/locale layout and writes
+the versioned ZIP to `dist\`.
+
+Core tests can also be run independently:
 
 ```powershell
-pwsh -File .\scripts\build-windows.ps1 -Configuration Release
+cmake -S tests -B build-tests
+cmake --build build-tests --config Release
+ctest --test-dir build-tests -C Release --output-on-failure
 ```
 
-The build script uses the official OBS plugin template as a disposable build workspace, downloads and verifies the OBS 32.2.2 dependencies, and copies the final plugin tree into:
+CI runs both the portable core-test target and the full Windows build/package
+flow. See [the manual test matrix](docs/manual-test-matrix.md) for the release
+gate and [the integration design](docs/virtual-camera-integration.md) for the
+contributor architecture.
 
-```text
-release\RelWithDebInfo\
-```
+## Memory trade-off
 
-The plugin DLL should be located under the generated `obs-virtual-camera-delay\bin\64bit` directory.
+NV12 uses approximately `width * height * 1.5` bytes per frame. Expected queue
+memory is approximately `width * height * 1.5 * FPS * delay_seconds`.
 
-To create a ZIP package after building:
+| Mode | 1000 ms | 3000 ms |
+|---|---:|---:|
+| 720p30 | ~40 MiB | ~119 MiB |
+| 720p60 | ~79 MiB | ~238 MiB |
+| 1080p30 | ~89 MiB | ~267 MiB |
+| 1080p60 | ~178 MiB | ~534 MiB |
 
-```powershell
-pwsh -File .\scripts\package-windows.ps1
-```
+## Troubleshooting
 
-The package is written to `dist\`.
+- **Tools menu item is missing:** inspect the OBS log for a module load error and
+  verify the bundle layout above.
+- **Old UI still appears:** remove a duplicate bundle from either `%APPDATA%` or
+  `%PROGRAMDATA%`; then restart OBS.
+- **Virtual Camera falls back to real-time:** inspect the log. HDR or an invalid
+  video configuration causes a safe fallback instead of a crash.
+- **Configured delay was reduced:** the requested combination exceeded the
+  768 MiB queue limit.
+- **Consumer is black:** wait at least the configured delay, verify delayed mode
+  is enabled, and confirm the app selected **OBS Virtual Camera**.
 
-## Installing for a smoke test
+## Known limitations
 
-Close OBS first. Copy the contents of the generated release package into the matching OBS Studio installation directories. Keep the plugin DLL and its `data` directory together in the layout produced by the build.
-
-After restarting OBS:
-
-1. Confirm the log contains `custom output started` and `loaded`.
-2. Keep Program video active for longer than three seconds.
-3. Confirm the log contains `first delayed video frame reached the custom output boundary`.
-4. Start streaming or recording and confirm it remains functional; the custom
-   output is an additional raw-video consumer and does not rewire either path.
-5. Exit OBS and confirm the custom output reports its received-frame count.
-
-## Current limits
-
-- Video only; audio is not captured or delayed.
-- The PoC queue delay defaults to 3000 ms and supports 0–10000 ms internally.
-- The delay is not yet exposed through a settings UI.
-- Delayed frames are not yet sent to the Windows Virtual Camera driver.
-- CPU frame copies can consume substantial RAM; there is no adaptive cap yet.
-- Runtime behavior must still be smoke-tested inside OBS; build validation cannot
-  exercise raw-frame delivery.
-
-## Build/CI approach
-
-The repository keeps the plugin source small while `scripts/build-windows.ps1` bootstraps the current official `obsproject/obs-plugintemplate` build infrastructure into `.build/`. The temporary workspace is not committed.
-
-GitHub Actions runs the same Windows build and packaging flow on pushes and pull requests to `main` and uploads the resulting ZIP as a workflow artifact.
-
-## Next engineering milestones
-
-1. Add the Windows Virtual Camera sink behind the delayed-frame boundary.
-2. Expose delay configuration without introducing a source/filter workflow.
-3. Add a RAM estimate and hard memory/frame cap.
-4. Preserve OBS color spaces/HDR correctly.
-5. Complete the Windows/OBS runtime smoke-test matrix.
+- Windows x64 only; OBS 32.x is the validated ABI target.
+- SDR NV12 video only; no HDR PQ/HLG support.
+- Maximum configured delay is 3000 ms and may be clamped by memory safety.
+- Settings apply on the next Virtual Camera start.
+- The queue makes one CPU copy per input frame and one libobs async-source copy
+  per emitted frame.
+- Consumer-app and long-duration results are tracked explicitly in
+  [the manual matrix](docs/manual-test-matrix.md); release claims must not exceed
+  its completed rows.

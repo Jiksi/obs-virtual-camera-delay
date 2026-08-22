@@ -1,68 +1,92 @@
 # Virtual Camera integration
 
-## Requirement
+## Product seam
 
-The product seam is an OBS output, not a source or scene filter:
+The delay belongs only on the Virtual Camera branch:
 
 ```text
-Program ──> Stream / Recording
-    |
-    └──> delayed_virtual_camera_output ──> Windows Virtual Camera sink
+                              +--> stream output
+OBS video / selected VC view -+--> recording output
+                              |
+                              +--> delayed feeder output
+                                      |
+                                      v
+                              TimestampFrameBuffer (owned NV12)
+                                      |
+                                      v
+                              private async OBS source
+                                      |
+                                      v
+                              private OBS video view
+                                      |
+                                      v
+                              built-in virtualcam_output
+                                      |
+                                      v
+                              OBS shared-memory queue/driver
 ```
 
-Only the Virtual Camera branch may be delayed.
+The plugin does not create a shared-memory mapping or register a DirectShow
+device. It reuses OBS's `virtualcam_output`, so consumers still see exactly the
+normal **OBS Virtual Camera** device and OBS remains the owner of its Windows
+transport.
 
-## Proof-of-concept architecture
+## Components
 
-The plugin registers a raw-video `obs_output_info` with the ID
-`delayed_virtual_camera_output`. After `OBS_FRONTEND_EVENT_FINISHED_LOADING`,
-`VirtualCameraDelayController` creates that output, assigns `obs_get_video()` as
-its video media, and starts it from plugin code.
+- `TimestampFrameBuffer` is OBS-independent. It owns tightly packed NV12 frames,
+  uses capture timestamps rather than a fixed frame count, preserves order, and
+  enforces the byte limit.
+- `delayed_virtual_camera_output` is a private raw-video feeder. OBS converts the
+  selected Virtual Camera media to NV12 before its callback. A due frame is
+  emitted with the current delivery timestamp so libobs schedules old content
+  now rather than treating it as stale.
+- `virtual_camera_delay_private_source` is an async source used only inside a
+  private view. It also supplies the settings dialog; it is never exposed as a
+  scene/filter workflow.
+- `VirtualCameraDelayController` follows frontend start/stop/exit events and
+  performs the rewire only after the frontend reports that it finished loading.
 
-Starting the output calls `obs_output_begin_data_capture()`. OBS then supplies
-NV12 Program frames through the output's `raw_video` callback. Each callback
-copies the frame into an owned CPU buffer. Once the source timestamp has advanced
-by the configured delay, the oldest frame crosses the delayed-output boundary and
-is removed from the queue.
+## Lifecycle
 
-This is an additional raw-video consumer. It does not change Program media or the
-video media used by streaming and recording outputs.
+```text
+Idle
+  | user starts built-in VC
+  v
+Built-in VC starts -> controller saves original media -> requests stop
+  | deactivate signal
+  v
+Create private view -> start feeder on original media -> restart built-in VC
+  |
+  v
+ActiveDelayed
+  | user stops VC / OBS exits
+  v
+Stop feeder -> clear async frames -> free NV12 queue -> restore original media
+  |
+  v
+Idle
+```
 
-## Transition from the legacy filter path
+Calling `obs_frontend_get_virtualcam_output()` during module load is unsafe
+because the frontend implementation is not constructed yet. Attachment is
+therefore deferred to `OBS_FRONTEND_EVENT_FINISHED_LOADING`.
 
-`virtual-camera-delay.cpp` remains in the build as legacy/reference code during
-the transition, but `obs_module_load()` no longer registers its source type. It
-therefore does not appear as the plugin's primary user-facing feature and cannot
-be added accidentally to a scene or source.
+## Geometry and color safety
 
-The old frontend logic that stopped, rewired, and restarted OBS's built-in
-Virtual Camera has also been removed. The controller now owns only the lifecycle
-of the plugin's custom output.
+The feeder snapshots width, height, FPS, color space, and range on every start.
+OBS settings that change geometry require Virtual Camera restart; the old feeder
+is destroyed and its queue flushed before the new configuration is built. Scene,
+program, and source content changes do not change frame geometry and flow through
+the original media automatically.
 
-## Current boundary
+The conversion is explicitly NV12. SDR matrices/ranges are copied into the async
+source frame. PQ and HLG are rejected and the controller restores a real-time
+Virtual Camera rather than sending incorrectly interpreted frames.
 
-The PoC proves these parts of the architecture:
+## Concurrency and ownership
 
-- the custom output type registers successfully;
-- plugin code creates and starts an instance;
-- the output receives Program video frames;
-- timestamped frames remain queued until the delay is reached;
-- streaming and recording remain on their existing, real-time output paths; and
-- plugin unload stops and releases the output.
-
-It does not yet implement the final Windows Virtual Camera sink. The delayed
-frame that crosses the output boundary is currently counted and released. A
-future platform adapter will write that frame to the Windows shared-memory queue
-used by a Virtual Camera consumer.
-
-## Runtime verification
-
-A Windows OBS smoke test should confirm the following log sequence:
-
-1. `custom output started ... with 3000 ms delay`
-2. `custom delayed virtual camera output created and started independently ...`
-3. `first delayed video frame reached the custom output boundary`
-4. on shutdown, `custom output stopped after receiving ... frames`
-
-Build and packaging validation prove API compatibility and artifact layout, but
-only a running OBS video pipeline can exercise the raw-frame callback.
+The raw-video callback owns all copied payloads. The queue is used only by that
+callback, so it needs no hot-path mutex. A short mutex protects acquisition of a
+reference to the private target source; the actual libobs frame copy happens
+after the mutex is released. Stop first disables capture, then clears the queue
+and target reference.

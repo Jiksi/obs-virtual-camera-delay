@@ -1,22 +1,15 @@
 #include "delayed-virtual-camera-output.hpp"
 
+#include "frame-buffer.hpp"
+#include "virtual-camera-delay.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <deque>
 #include <new>
-#include <vector>
 
 namespace {
 constexpr const char *kSettingDelayMs = "delay_ms";
-constexpr int64_t kDefaultDelayMs = 3000;
-constexpr int64_t kMaxDelayMs = 10000;
-
-struct BufferedVideoFrame {
-    std::vector<uint8_t> y;
-    std::vector<uint8_t> uv;
-    uint64_t timestamp = 0;
-};
 
 class DelayedVirtualCameraOutput {
 public:
@@ -27,57 +20,89 @@ public:
         if (!obs_output_can_begin_data_capture(output_, 0))
             return false;
 
-        const uint32_t width = obs_output_get_width(output_);
-        const uint32_t height = obs_output_get_height(output_);
-        if (!width || !height)
+        obs_video_info videoInfo{};
+        if (!obs_get_video_info(&videoInfo) || !videoInfo.fps_num ||
+            !videoInfo.fps_den)
+            return false;
+        if (videoInfo.colorspace == VIDEO_CS_2100_PQ ||
+            videoInfo.colorspace == VIDEO_CS_2100_HLG) {
+            blog(LOG_ERROR,
+                 "[obs-virtual-camera-delay] HDR PQ/HLG is unsupported in "
+                 "v0.1.0; use an SDR color space");
+            return false;
+        }
+
+        width_ = obs_output_get_width(output_);
+        height_ = obs_output_get_height(output_);
+        if (!width_ || !height_)
             return false;
 
         video_scale_info conversion{};
         conversion.format = VIDEO_FORMAT_NV12;
-        conversion.width = width;
-        conversion.height = height;
+        conversion.width = width_;
+        conversion.height = height_;
+        conversion.colorspace = videoInfo.colorspace;
+        conversion.range = videoInfo.range;
         obs_output_set_video_conversion(output_, &conversion);
 
-        width_ = width;
-        height_ = height;
-        receivedFrames_ = 0;
-        delayedFrames_ = 0;
-        frames_.clear();
-        active_.store(true, std::memory_order_release);
+        colorSpace_ = videoInfo.colorspace;
+        range_ = videoInfo.range;
+        const auto config = buffer_.Configure(
+            width_, height_, videoInfo.fps_num, videoInfo.fps_den,
+            requestedDelayMs_);
+        if (!config.frameLimit) {
+            blog(LOG_ERROR,
+                 "[obs-virtual-camera-delay] %ux%u NV12 frames exceed the "
+                 "buffer memory limit",
+                 width_, height_);
+            return false;
+        }
+        if (config.clamped) {
+            blog(LOG_WARNING,
+                 "[obs-virtual-camera-delay] requested delay %u ms was "
+                 "clamped to %u ms for %ux%u under the 768 MiB limit",
+                 config.requestedDelayMs, config.delayMs, width_, height_);
+        }
 
+        active_.store(true, std::memory_order_release);
         if (!obs_output_begin_data_capture(output_, 0)) {
             active_.store(false, std::memory_order_release);
+            buffer_.Reset();
             return false;
         }
 
         blog(LOG_INFO,
-             "[obs-virtual-camera-delay] custom output started at %ux%u "
-             "with %lld ms delay",
-             width_, height_, static_cast<long long>(delayNs_ / 1000000ULL));
+             "[obs-virtual-camera-delay] feeder started at %ux%u, delay=%u "
+             "ms, expected buffer=%.1f MiB",
+             width_, height_, config.delayMs,
+             static_cast<double>(config.expectedBytes) / (1024.0 * 1024.0));
         return true;
     }
 
     void Stop()
     {
-        if (!active_.exchange(false, std::memory_order_acq_rel))
+        if (!active_.exchange(false, std::memory_order_acq_rel)) {
+            buffer_.Reset();
             return;
-
+        }
         obs_output_end_data_capture(output_);
-        frames_.clear();
+        const auto stats = buffer_.Stats();
+        buffer_.Reset();
         blog(LOG_INFO,
-             "[obs-virtual-camera-delay] custom output stopped after receiving "
-             "%llu frames (%llu reached the delayed output boundary)",
-             static_cast<unsigned long long>(receivedFrames_),
-             static_cast<unsigned long long>(delayedFrames_));
+             "[obs-virtual-camera-delay] feeder stopped: received=%llu, "
+             "emitted=%llu, dropped=%llu",
+             static_cast<unsigned long long>(stats.enqueued),
+             static_cast<unsigned long long>(stats.emitted),
+             static_cast<unsigned long long>(stats.dropped));
     }
 
     void Update(obs_data_t *settings)
     {
-        const int64_t delayMs = std::clamp(
-            obs_data_get_int(settings, kSettingDelayMs), int64_t{0},
-            kMaxDelayMs);
+        const int64_t delayMs = std::clamp<int64_t>(
+            obs_data_get_int(settings, kSettingDelayMs), 0,
+            virtual_camera_delay::kMaximumDelayMs);
         obs_data_set_int(settings, kSettingDelayMs, delayMs);
-        delayNs_ = static_cast<uint64_t>(delayMs) * 1000000ULL;
+        requestedDelayMs_ = static_cast<uint32_t>(delayMs);
     }
 
     void ReceiveVideo(const video_data *frame)
@@ -86,44 +111,28 @@ public:
             !frame->data[0] || !frame->data[1])
             return;
 
-        BufferedVideoFrame copy;
-        copy.timestamp = frame->timestamp;
-        CopyPlane(copy.y, frame->data[0], frame->linesize[0], height_);
-        CopyPlane(copy.uv, frame->data[1], frame->linesize[1],
-                  (height_ + 1) / 2);
-        frames_.push_back(std::move(copy));
-        ++receivedFrames_;
-
-        while (!frames_.empty() &&
-               frames_.front().timestamp + delayNs_ <= frame->timestamp) {
-            frames_.pop_front();
-            ++delayedFrames_;
-
-            if (delayedFrames_ == 1) {
-                blog(LOG_INFO,
-                     "[obs-virtual-camera-delay] first delayed video frame "
-                     "reached the custom output boundary");
-            }
-        }
+        virtual_camera_delay::Nv12FrameView view;
+        view.y = frame->data[0];
+        view.uv = frame->data[1];
+        view.yStride = frame->linesize[0];
+        view.uvStride = frame->linesize[1];
+        view.width = width_;
+        view.height = height_;
+        view.timestamp = frame->timestamp;
+        auto ready = buffer_.Push(view);
+        if (ready)
+            OutputDelayedVideoFrame(*ready, frame->timestamp, colorSpace_, range_);
     }
 
 private:
-    static void CopyPlane(std::vector<uint8_t> &destination,
-                          const uint8_t *source, uint32_t linesize,
-                          uint32_t rows)
-    {
-        const size_t bytes = static_cast<size_t>(linesize) * rows;
-        destination.assign(source, source + bytes);
-    }
-
     obs_output_t *output_ = nullptr;
-    std::deque<BufferedVideoFrame> frames_;
+    virtual_camera_delay::TimestampFrameBuffer buffer_;
     std::atomic<bool> active_{false};
     uint32_t width_ = 0;
     uint32_t height_ = 0;
-    uint64_t delayNs_ = static_cast<uint64_t>(kDefaultDelayMs) * 1000000ULL;
-    uint64_t receivedFrames_ = 0;
-    uint64_t delayedFrames_ = 0;
+    uint32_t requestedDelayMs_ = virtual_camera_delay::kDefaultDelayMs;
+    enum video_colorspace colorSpace_ = VIDEO_CS_DEFAULT;
+    enum video_range_type range_ = VIDEO_RANGE_DEFAULT;
 };
 
 const char *OutputGetName(void *)
@@ -136,7 +145,6 @@ void *OutputCreate(obs_data_t *settings, obs_output_t *output)
     auto *context = new (std::nothrow) DelayedVirtualCameraOutput(output);
     if (!context)
         return nullptr;
-
     context->Update(settings);
     return context;
 }
@@ -170,7 +178,8 @@ void OutputUpdate(void *data, obs_data_t *settings)
 
 void OutputDefaults(obs_data_t *settings)
 {
-    obs_data_set_default_int(settings, kSettingDelayMs, kDefaultDelayMs);
+    obs_data_set_default_int(settings, kSettingDelayMs,
+                             virtual_camera_delay::kDefaultDelayMs);
 }
 } // namespace
 
@@ -178,7 +187,6 @@ const obs_output_info *GetDelayedVirtualCameraOutputInfo()
 {
     static obs_output_info info{};
     static bool initialized = false;
-
     if (!initialized) {
         info.id = kDelayedVirtualCameraOutputId;
         info.flags = OBS_OUTPUT_VIDEO;
@@ -192,6 +200,5 @@ const obs_output_info *GetDelayedVirtualCameraOutputInfo()
         info.get_defaults = OutputDefaults;
         initialized = true;
     }
-
     return &info;
 }

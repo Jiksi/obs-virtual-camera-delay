@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>OBS Virtual Camera test harness</title>
+<style>
+  body { font: 16px system-ui; max-width: 900px; margin: 2rem auto; }
+  video { width: 640px; height: 360px; background: #111; }
+  select, button { font: inherit; margin: .5rem .5rem .5rem 0; }
+</style>
+<h1>OBS Virtual Camera test harness</h1>
+<p>This page stays local. Choose a device, then start its preview.</p>
+<select id="devices" aria-label="Video device"></select>
+<button id="refresh">Refresh devices</button>
+<button id="start">Start preview</button>
+<p id="status" role="status">Not started</p>
+<video id="preview" autoplay muted playsinline></video>
+<script>
+  const devices = document.querySelector('#devices');
+  const status = document.querySelector('#status');
+  const preview = document.querySelector('#preview');
+
+  async function refresh() {
+    try {
+      if (!navigator.mediaDevices)
+        throw new Error('This browser does not expose WebRTC media devices');
+      const cameras = (await navigator.mediaDevices.enumerateDevices())
+        .filter(device => device.kind === 'videoinput');
+      devices.replaceChildren(...cameras.map((camera, index) => {
+        const option = document.createElement('option');
+        option.value = camera.deviceId;
+        option.textContent = camera.label || `Camera ${index + 1}`;
+        return option;
+      }));
+      status.textContent = `${cameras.length} video device(s) found`;
+    } catch (error) {
+      status.textContent = `Unavailable: ${error.message}`;
+    }
+  }
+
+  document.querySelector('#refresh').addEventListener('click', refresh);
+  document.querySelector('#start').addEventListener('click', async () => {
+    if (preview.srcObject)
+      preview.srcObject.getTracks().forEach(track => track.stop());
+    preview.srcObject = await navigator.mediaDevices.getUserMedia({
+      video: {deviceId: {exact: devices.value}}, audio: false
+    });
+    const track = preview.srcObject.getVideoTracks()[0];
+    status.textContent = `Active: ${track.label}`;
+    await refresh();
+  });
+  refresh();
+</script>
+</html>

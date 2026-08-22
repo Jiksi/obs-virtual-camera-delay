@@ -17,6 +17,7 @@ foreach ($command in @('git', 'cmake', 'curl.exe')) {
 }
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$ProjectVersion = (Get-Content -LiteralPath (Join-Path $ProjectRoot 'VERSION') -Raw).Trim()
 $BuildRoot = Join-Path $ProjectRoot '.build'
 $Workspace = Join-Path $BuildRoot 'obs-plugintemplate'
 $ReleaseRoot = Join-Path $ProjectRoot 'release'
@@ -42,7 +43,7 @@ $buildSpecPath = Join-Path $Workspace 'buildspec.json'
 $spec = Get-Content $buildSpecPath -Raw | ConvertFrom-Json
 $spec.name = 'obs-virtual-camera-delay'
 $spec.displayName = 'OBS Virtual Camera Delay'
-$spec.version = '0.1.0'
+$spec.version = $ProjectVersion
 $spec.author = 'Jiksi'
 $spec.website = 'https://github.com/Jiksi/obs-virtual-camera-delay'
 $spec.email = 'noreply@example.com'
@@ -91,6 +92,8 @@ target_sources(
     src/plugin-main.cpp
     src/delayed-virtual-camera-output.cpp
     src/delayed-virtual-camera-output.hpp
+    src/frame-buffer.cpp
+    src/frame-buffer.hpp
     src/virtual-camera-delay.cpp
     src/virtual-camera-delay.hpp
     src/virtual-camera-delay-controller.cpp
@@ -102,6 +105,15 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE PLUGIN_VERSION="${_vers
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
 '@
 Set-Content -Encoding UTF8 (Join-Path $Workspace 'CMakeLists.txt') $cmake
+
+Write-Host 'Running deterministic core tests...'
+$testBuild = Join-Path $BuildRoot 'tests'
+cmake -S (Join-Path $ProjectRoot 'tests') -B $testBuild
+if ($LASTEXITCODE -ne 0) { throw "Test configure failed with exit code $LASTEXITCODE." }
+cmake --build $testBuild --config $Configuration
+if ($LASTEXITCODE -ne 0) { throw "Test build failed with exit code $LASTEXITCODE." }
+ctest --test-dir $testBuild -C $Configuration --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw "Tests failed with exit code $LASTEXITCODE." }
 
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Workspace 'build_x64')
 

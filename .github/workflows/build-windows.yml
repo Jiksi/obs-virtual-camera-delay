@@ -7,6 +7,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  core-tests:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure tests
+        run: cmake -S tests -B build-tests
+
+      - name: Build tests
+        run: cmake --build build-tests --config Release
+
+      - name: Run tests
+        run: ctest --test-dir build-tests -C Release --output-on-failure
+
   build:
     # The OBS plugin template currently configures the VS 2022 generator.
     runs-on: windows-2022
