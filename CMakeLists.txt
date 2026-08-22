@@ -12,6 +12,8 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 
 target_sources(${PROJECT_NAME} PRIVATE
     src/plugin-main.cpp
+    src/delayed-virtual-camera-output.cpp
+    src/delayed-virtual-camera-output.hpp
     src/virtual-camera-delay.cpp
     src/virtual-camera-delay.hpp
     src/virtual-camera-delay-controller.cpp

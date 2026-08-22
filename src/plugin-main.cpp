@@ -1,6 +1,6 @@
 #include <obs-module.h>
 
-#include "virtual-camera-delay.hpp"
+#include "delayed-virtual-camera-output.hpp"
 #include "virtual-camera-delay-controller.hpp"
 
 OBS_DECLARE_MODULE()
@@ -8,12 +8,12 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-virtual-camera-delay", "en-US")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-    return "Automatically delays the built-in OBS Virtual Camera Program output.";
+    return "Proof-of-concept delayed virtual camera output for OBS Studio.";
 }
 
 bool obs_module_load(void)
 {
-    obs_register_source(GetVirtualCameraDelaySourceInfo());
+    obs_register_output(GetDelayedVirtualCameraOutputInfo());
 
     const bool loaded = LoadVirtualCameraDelayController();
     blog(loaded ? LOG_INFO : LOG_ERROR,

@@ -2,58 +2,67 @@
 
 ## Requirement
 
-The product seam is the built-in OBS Virtual Camera control, not a source or scene filter:
+The product seam is an OBS output, not a source or scene filter:
 
 ```text
 Program ──> Stream / Recording
     |
-    └──> delayed private video view ──> built-in Virtual Camera output
+    └──> delayed_virtual_camera_output ──> Windows Virtual Camera sink
 ```
 
 Only the Virtual Camera branch may be delayed.
 
-## OBS 32.2.2 public-interface constraint
+## Proof-of-concept architecture
 
-OBS configures the built-in Virtual Camera in `BasicOutputHandler::StartVirtualCam()` by calling `obs_output_set_media()` immediately before `obs_output_start()`.
+The plugin registers a raw-video `obs_output_info` with the ID
+`delayed_virtual_camera_output`. After `OBS_FRONTEND_EVENT_FINISHED_LOADING`,
+`VirtualCameraDelayController` creates that output, assigns `obs_get_video()` as
+its video media, and starts it from plugin code.
 
-The raw output connects to that selected `video_t` while `obs_output_start()` is running. The output's `starting` signal and `OBS_FRONTEND_EVENT_VIRTUALCAM_STARTED` are emitted only after that work. OBS 32.2.2 does not expose a public pre-start Virtual Camera callback or a public interface for inserting a video transform into an already-connected raw output.
+Starting the output calls `obs_output_begin_data_capture()`. OBS then supplies
+NV12 Program frames through the output's `raw_video` callback. Each callback
+copies the frame into an owned CPU buffer. Once the source timestamp has advanced
+by the configured delay, the oldest frame crosses the delayed-output boundary and
+is removed from the queue.
 
-Consequences:
+This is an additional raw-video consumer. It does not change Program media or the
+video media used by streaming and recording outputs.
 
-- Setting media at plugin load is overwritten by the frontend immediately before start.
-- Changing `obs_output_set_media()` after the started event does not move the already-connected raw-video callback.
-- Attaching a filter to Program would also delay streaming and recording, violating the requirement.
-- Accessing private `obs_output` or frontend implementation fields would tightly couple the plugin to OBS internals and ABI details.
+## Transition from the legacy filter path
 
-## Selected architecture
+`virtual-camera-delay.cpp` remains in the build as legacy/reference code during
+the transition, but `obs_module_load()` no longer registers its source type. It
+therefore does not appear as the plugin's primary user-facing feature and cannot
+be added accidentally to a scene or source.
 
-`VirtualCameraDelayController` is the deep module at the frontend/output seam. Its external interface is only load/unload; event ordering, output signals, the internal restart, media rewiring, and cleanup stay in its implementation.
+The old frontend logic that stopped, rewired, and restarted OBS's built-in
+Virtual Camera has also been removed. The controller now owns only the lifecycle
+of the plugin's custom output.
 
-For Program mode it performs this lifecycle:
+## Current boundary
 
-1. Observe `OBS_FRONTEND_EVENT_VIRTUALCAM_STARTED`.
-2. Verify that `obs_output_video(virtualCam) == obs_get_video()` so the selected mode is Program.
-3. Stop the Virtual Camera once.
-4. Wait for the output's `deactivate` signal, which confirms the original raw-video callback has disconnected.
-5. Create a private `obs_view_t` containing `virtual_camera_delay_program_source`.
-6. Attach the view's `video_t` to only the built-in Virtual Camera output.
-7. Start that output directly.
-8. On the user's normal stop, restore Program media and destroy the private view.
+The PoC proves these parts of the architecture:
 
-The private source re-renders the public OBS output channels into a queue of GPU textures. Resolution or FPS changes rebuild the queue; source deactivation releases it.
+- the custom output type registers successfully;
+- plugin code creates and starts an instance;
+- the output receives Program video frames;
+- timestamped frames remain queued until the delay is reached;
+- streaming and recording remain on their existing, real-time output paths; and
+- plugin unload stops and releases the output.
 
-## Failure behavior
+It does not yet implement the final Windows Virtual Camera sink. The delayed
+frame that crosses the output boundary is currently counted and released. A
+future platform adapter will write that frame to the Windows shared-memory queue
+used by a Virtual Camera consumer.
 
-The controller does not silently change unsupported Virtual Camera selections. Preview, Scene, and Source modes remain pass-through and produce an OBS log warning. If the private view or restart fails, the plugin logs an error, restores Program media while the output is inactive, and releases the partial view.
+## Runtime verification
 
-## Rejected alternatives
+A Windows OBS smoke test should confirm the following log sequence:
 
-- **Effect Filter on every source/scene:** wrong user experience and easy to configure incorrectly.
-- **Filter on Program:** delays streaming and recording too.
-- **Replace OBS's `virtualcam_output` type:** conflicts with the platform implementation and duplicates OS-specific output code.
-- **Patch private OBS structures or disconnect its private callback:** ABI-fragile and not acceptable before the public-interface approach is runtime-tested.
-- **Change output media after `VIRTUALCAM_STARTED` without restarting:** ineffective because raw capture is already connected to the previous `video_t`.
+1. `custom output started ... with 3000 ms delay`
+2. `custom delayed virtual camera output created and started independently ...`
+3. `first delayed video frame reached the custom output boundary`
+4. on shutdown, `custom output stopped after receiving ... frames`
 
-## Verification boundary
-
-The Windows build verifies symbols, C++ compilation, frontend linkage, packaging layout, and locale resources. A real OBS process plus a Virtual Camera consumer is still required to verify timing, UI handoff behavior, repeated start/stop cycles, and resource usage.
+Build and packaging validation prove API compatibility and artifact layout, but
+only a running OBS video pipeline can exercise the raw-frame callback.
