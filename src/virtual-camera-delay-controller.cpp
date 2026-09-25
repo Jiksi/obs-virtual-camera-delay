@@ -57,6 +57,9 @@ public:
         }
 
         obs_frontend_add_event_callback(FrontendEvent, this);
+        obsSignals_ = obs_get_signal_handler();
+        if (obsSignals_)
+            signal_handler_connect(obsSignals_, "video_reset", VideoReset, this);
         obs_frontend_add_tools_menu_item(
             obs_module_text("VirtualCameraDelaySettings"), OpenSettings, this);
         loaded_ = true;
@@ -69,6 +72,10 @@ public:
             return;
         shuttingDown_ = true;
         obs_frontend_remove_event_callback(FrontendEvent, this);
+        if (obsSignals_) {
+            signal_handler_disconnect(obsSignals_, "video_reset", VideoReset, this);
+            obsSignals_ = nullptr;
+        }
 
         DestroyFeeder();
         ClearDelayedVideoTarget();
@@ -98,6 +105,17 @@ private:
             obs_frontend_open_source_properties(controller->delaySource_);
     }
 
+    static void VideoReset(void *data, calldata_t *)
+    {
+        obs_queue_task(OBS_TASK_UI, FinishVideoReset, data, false);
+    }
+
+    static void FinishVideoReset(void *data)
+    {
+        static_cast<VirtualCameraDelayController *>(data)
+            ->HandleVideoSettingsChanged();
+    }
+
     static void OutputDeactivated(void *data, calldata_t *)
     {
         obs_queue_task(OBS_TASK_UI, FinishOutputDeactivated, data, false);
@@ -122,9 +140,6 @@ private:
         case OBS_FRONTEND_EVENT_VIRTUALCAM_STOPPED:
             if (state_ != DelayState::StoppingForRewire)
                 FinishNormalStop();
-            break;
-        case OBS_FRONTEND_EVENT_VIDEO_SETTINGS_CHANGED:
-            HandleVideoSettingsChanged();
             break;
         case OBS_FRONTEND_EVENT_EXIT:
             shuttingDown_ = true;
@@ -382,6 +397,7 @@ private:
 
     obs_output_t *virtualCameraOutput_ = nullptr;
     signal_handler_t *outputSignals_ = nullptr;
+    signal_handler_t *obsSignals_ = nullptr;
     obs_output_t *feederOutput_ = nullptr;
     obs_source_t *delaySource_ = nullptr;
     obs_view_t *delayedView_ = nullptr;
