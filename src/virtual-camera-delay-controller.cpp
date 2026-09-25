@@ -123,6 +123,9 @@ private:
             if (state_ != DelayState::StoppingForRewire)
                 FinishNormalStop();
             break;
+        case OBS_FRONTEND_EVENT_VIDEO_SETTINGS_CHANGED:
+            HandleVideoSettingsChanged();
+            break;
         case OBS_FRONTEND_EVENT_EXIT:
             shuttingDown_ = true;
             break;
@@ -219,12 +222,46 @@ private:
     void OnOutputDeactivated()
     {
         if (state_ == DelayState::StoppingForRewire && !shuttingDown_) {
+            if (pendingVideoReconfigure_) {
+                pendingVideoReconfigure_ = false;
+                DestroyFeeder();
+                ClearDelayedVideoTarget();
+                DestroyDelayedView();
+
+                // obs_get_video() now points at the newly configured OBS
+                // video pipeline. Never feed frames from the old geometry
+                // into the rebuilt delayed view.
+                originalVideo_ = obs_get_video();
+                originalAudio_ = obs_get_audio();
+                blog(LOG_INFO,
+                     "[obs-virtual-camera-delay] rebuilding delayed pipeline "
+                     "after OBS video settings changed");
+            }
             StartDelayedPipeline();
             return;
         }
         if (state_ == DelayState::ActiveDelayed ||
             state_ == DelayState::StartingDelayed || shuttingDown_)
             FinishNormalStop();
+    }
+
+    void HandleVideoSettingsChanged()
+    {
+        if (shuttingDown_ || state_ != DelayState::ActiveDelayed ||
+            !virtualCameraOutput_)
+            return;
+
+        // The delayed view and frame buffer were created for the previous
+        // geometry. Stop the built-in Virtual Camera first; its deactivate
+        // signal will rebuild both against the new OBS video output. This
+        // also handles orientation changes such as 1920x1080 -> 1080x1920
+        // without mixing frames from the two geometries.
+        pendingVideoReconfigure_ = true;
+        state_ = DelayState::StoppingForRewire;
+        blog(LOG_INFO,
+             "[obs-virtual-camera-delay] OBS video settings changed; "
+             "restarting delayed Virtual Camera pipeline");
+        obs_frontend_stop_virtualcam();
     }
 
     bool CreateDelayedView()
@@ -354,6 +391,7 @@ private:
     DelayState state_ = DelayState::Idle;
     bool loaded_ = false;
     bool shuttingDown_ = false;
+    bool pendingVideoReconfigure_ = false;
 };
 
 std::unique_ptr<VirtualCameraDelayController> controller;
