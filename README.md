@@ -16,7 +16,7 @@ OBS selected VC media ---+
                                                    normal OBS Virtual Camera
 ```
 
-## Supported v0.1.0 configuration
+## Supported v0.1.1 configuration
 
 - OBS Studio 32.x on Windows x64.
 - SDR video (Rec. 601, Rec. 709, or sRGB) converted to NV12.
@@ -27,14 +27,14 @@ OBS selected VC media ---+
 - Custom Virtual Camera media geometry is preserved. This includes portrait
   canvases such as Aitum Vertical at 1080x1920.
 
-HDR PQ/HLG is rejected for v0.1.0. Settings changes take effect on the next
+HDR PQ/HLG is rejected for v0.1.1. Settings changes take effect on the next
 Virtual Camera start, not during an active run.
 
 ## Install
 
 1. Close OBS Studio.
 2. From the GitHub Release **Assets**, download
-   `obs-virtual-camera-delay-0.1.0-windows-x64.zip` and extract it once. Do not
+   `obs-virtual-camera-delay-0.1.1-windows-x64.zip` and extract it once. Do not
    download the automatically generated source-code archives.
 3. Copy the extracted `obs-virtual-camera-delay` directory into one of:
    - current user: `%APPDATA%\obs-studio\plugins\`
@@ -104,7 +104,7 @@ flow. The artifact layout is also checked to prevent a ZIP-inside-ZIP download.
 
 ## Release validation
 
-v0.1.0 was validated with OBS Studio 32.2.2 on Windows x64 (build 26200) using
+v0.1.1 was validated with OBS Studio 32.2.2 on Windows x64 (build 26200) using
 an NVIDIA GeForce 930MX with D3D11. The completed manual checks covered:
 
 - 720p30, 720p60, 1080p30, and 1080p60;
