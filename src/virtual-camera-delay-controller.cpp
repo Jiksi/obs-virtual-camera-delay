@@ -57,6 +57,9 @@ public:
         }
 
         obs_frontend_add_event_callback(FrontendEvent, this);
+        obsSignals_ = obs_get_signal_handler();
+        if (obsSignals_)
+            signal_handler_connect(obsSignals_, "video_reset", VideoReset, this);
         obs_frontend_add_tools_menu_item(
             obs_module_text("VirtualCameraDelaySettings"), OpenSettings, this);
         loaded_ = true;
@@ -69,6 +72,10 @@ public:
             return;
         shuttingDown_ = true;
         obs_frontend_remove_event_callback(FrontendEvent, this);
+        if (obsSignals_) {
+            signal_handler_disconnect(obsSignals_, "video_reset", VideoReset, this);
+            obsSignals_ = nullptr;
+        }
 
         DestroyFeeder();
         ClearDelayedVideoTarget();
@@ -96,6 +103,17 @@ private:
         auto *controller = static_cast<VirtualCameraDelayController *>(data);
         if (controller->delaySource_)
             obs_frontend_open_source_properties(controller->delaySource_);
+    }
+
+    static void VideoReset(void *data, calldata_t *)
+    {
+        obs_queue_task(OBS_TASK_UI, FinishVideoReset, data, false);
+    }
+
+    static void FinishVideoReset(void *data)
+    {
+        static_cast<VirtualCameraDelayController *>(data)
+            ->HandleVideoSettingsChanged();
     }
 
     static void OutputDeactivated(void *data, calldata_t *)
@@ -205,10 +223,17 @@ private:
             return;
         }
 
+        // Capture the media selected by the component that started the
+        // built-in Virtual Camera. This may be the main OBS video output,
+        // an Aitum Vertical canvas, or another custom canvas.
         originalVideo_ = obs_output_video(virtualCameraOutput_);
         originalAudio_ = obs_output_audio(virtualCameraOutput_);
-        if (!originalVideo_)
+        if (!originalVideo_) {
+            blog(LOG_WARNING,
+                 "[obs-virtual-camera-delay] Virtual Camera has no selected "
+                 "video media; using the main OBS video output");
             originalVideo_ = obs_get_video();
+        }
         state_ = DelayState::StoppingForRewire;
         blog(LOG_INFO,
              "[obs-virtual-camera-delay] attaching timestamp delay to the "
@@ -219,6 +244,20 @@ private:
     void OnOutputDeactivated()
     {
         if (state_ == DelayState::StoppingForRewire && !shuttingDown_) {
+            if (pendingVideoReconfigure_) {
+                pendingVideoReconfigure_ = false;
+                DestroyFeeder();
+                ClearDelayedVideoTarget();
+                DestroyDelayedView();
+
+                // Keep the media captured when Virtual Camera was originally
+                // started. In particular, do not replace an Aitum Vertical
+                // canvas with obs_get_video() merely because the main OBS
+                // video pipeline emitted video_reset.
+                blog(LOG_INFO,
+                     "[obs-virtual-camera-delay] rebuilding delayed pipeline "
+                     "while preserving the selected Virtual Camera media");
+            }
             StartDelayedPipeline();
             return;
         }
@@ -227,21 +266,70 @@ private:
             FinishNormalStop();
     }
 
+    void HandleVideoSettingsChanged()
+    {
+        if (shuttingDown_ || state_ != DelayState::ActiveDelayed ||
+            !virtualCameraOutput_)
+            return;
+
+        // The delayed view and frame buffer were created for the previous
+        // geometry. Stop the built-in Virtual Camera first and rebuild the
+        // delay path, but preserve originalVideo_: it is the actual media
+        // selected for Virtual Camera and may belong to Aitum Vertical rather
+        // than the main OBS canvas.
+        pendingVideoReconfigure_ = true;
+        state_ = DelayState::StoppingForRewire;
+        blog(LOG_INFO,
+             "[obs-virtual-camera-delay] OBS video settings changed; "
+             "restarting delayed Virtual Camera pipeline");
+        obs_frontend_stop_virtualcam();
+    }
+
     bool CreateDelayedView()
     {
         if (delayedVideo_)
             return true;
+        if (!originalVideo_)
+            return false;
+
+        const video_output_info *inputInfo =
+            video_output_get_info(originalVideo_);
+        if (!inputInfo || !inputInfo->width || !inputInfo->height)
+            return false;
+
+        obs_video_info viewInfo{};
+        if (!obs_get_video_info(&viewInfo))
+            return false;
+
+        // obs_view_add() always inherits the main OBS canvas geometry. That
+        // breaks custom Virtual Camera media such as Aitum Vertical because
+        // its 1080x1920 frames get rendered into a 1920x1080 view. Create
+        // the delayed view with the actual selected Virtual Camera media
+        // geometry instead.
+        viewInfo.base_width = inputInfo->width;
+        viewInfo.base_height = inputInfo->height;
+        viewInfo.output_width = inputInfo->width;
+        viewInfo.output_height = inputInfo->height;
+        viewInfo.fps_num = inputInfo->fps_num;
+        viewInfo.fps_den = inputInfo->fps_den;
+        viewInfo.output_format = inputInfo->format;
+        viewInfo.colorspace = inputInfo->colorspace;
+        viewInfo.range = inputInfo->range;
+
         delayedView_ = obs_view_create();
         if (!delayedView_)
             return false;
         obs_view_set_source(delayedView_, 0, delaySource_);
-        delayedVideo_ = obs_view_add(delayedView_);
+        delayedVideo_ = obs_view_add2(delayedView_, &viewInfo);
         if (!delayedVideo_) {
             obs_view_set_source(delayedView_, 0, nullptr);
             obs_view_destroy(delayedView_);
             delayedView_ = nullptr;
             return false;
         }
+        blog(LOG_INFO,
+             "[obs-virtual-camera-delay] delayed view created at %ux%u",
+             inputInfo->width, inputInfo->height);
         return true;
     }
 
@@ -345,6 +433,7 @@ private:
 
     obs_output_t *virtualCameraOutput_ = nullptr;
     signal_handler_t *outputSignals_ = nullptr;
+    signal_handler_t *obsSignals_ = nullptr;
     obs_output_t *feederOutput_ = nullptr;
     obs_source_t *delaySource_ = nullptr;
     obs_view_t *delayedView_ = nullptr;
@@ -354,6 +443,7 @@ private:
     DelayState state_ = DelayState::Idle;
     bool loaded_ = false;
     bool shuttingDown_ = false;
+    bool pendingVideoReconfigure_ = false;
 };
 
 std::unique_ptr<VirtualCameraDelayController> controller;
