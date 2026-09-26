@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing GitHub Release tag to upload to"
+        required: true
+        default: "v0.1.1"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Validate tag matches VERSION
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $expectedTag = "v$version"
+          if ("${{ steps.release.outputs.tag }}" -ne $expectedTag) {
+            throw "Release tag ${{ steps.release.outputs.tag }} does not match VERSION ($expectedTag)."
+          }
+
+      - name: Build plugin
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Configuration RelWithDebInfo
+
+      - name: Package plugin
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Configuration RelWithDebInfo
+
+      - name: Upload package to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $package = "dist/obs-virtual-camera-delay-$version-windows-x64.zip"
+          gh release upload "${{ steps.release.outputs.tag }}" $package --clobber
