@@ -289,17 +289,47 @@ private:
     {
         if (delayedVideo_)
             return true;
+        if (!originalVideo_)
+            return false;
+
+        const video_output_info *inputInfo =
+            video_output_get_info(originalVideo_);
+        if (!inputInfo || !inputInfo->width || !inputInfo->height)
+            return false;
+
+        obs_video_info viewInfo{};
+        if (!obs_get_video_info(&viewInfo))
+            return false;
+
+        // obs_view_add() always inherits the main OBS canvas geometry. That
+        // breaks custom Virtual Camera media such as Aitum Vertical because
+        // its 1080x1920 frames get rendered into a 1920x1080 view. Create
+        // the delayed view with the actual selected Virtual Camera media
+        // geometry instead.
+        viewInfo.base_width = inputInfo->width;
+        viewInfo.base_height = inputInfo->height;
+        viewInfo.output_width = inputInfo->width;
+        viewInfo.output_height = inputInfo->height;
+        viewInfo.fps_num = inputInfo->fps_num;
+        viewInfo.fps_den = inputInfo->fps_den;
+        viewInfo.output_format = inputInfo->format;
+        viewInfo.colorspace = inputInfo->colorspace;
+        viewInfo.range = inputInfo->range;
+
         delayedView_ = obs_view_create();
         if (!delayedView_)
             return false;
         obs_view_set_source(delayedView_, 0, delaySource_);
-        delayedVideo_ = obs_view_add(delayedView_);
+        delayedVideo_ = obs_view_add2(delayedView_, &viewInfo);
         if (!delayedVideo_) {
             obs_view_set_source(delayedView_, 0, nullptr);
             obs_view_destroy(delayedView_);
             delayedView_ = nullptr;
             return false;
         }
+        blog(LOG_INFO,
+             "[obs-virtual-camera-delay] delayed view created at %ux%u",
+             inputInfo->width, inputInfo->height);
         return true;
     }
 
