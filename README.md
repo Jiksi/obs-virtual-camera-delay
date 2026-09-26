@@ -34,7 +34,7 @@ Virtual Camera start, not during an active run.
 
 1. Close OBS Studio.
 2. From the GitHub Release **Assets**, download
-   `obs-virtual-camera-delay-0.1.1-windows-x64.zip` and extract it once. Do not
+   `obs-virtual-camera-delay-windows-x64.zip` and extract it once. Do not
    download the automatically generated source-code archives.
 3. Copy the extracted `obs-virtual-camera-delay` directory into one of:
    - current user: `%APPDATA%\obs-studio\plugins\`
