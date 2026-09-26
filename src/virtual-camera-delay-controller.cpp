@@ -223,10 +223,17 @@ private:
             return;
         }
 
+        // Capture the media selected by the component that started the
+        // built-in Virtual Camera. This may be the main OBS video output,
+        // an Aitum Vertical canvas, or another custom canvas.
         originalVideo_ = obs_output_video(virtualCameraOutput_);
         originalAudio_ = obs_output_audio(virtualCameraOutput_);
-        if (!originalVideo_)
+        if (!originalVideo_) {
+            blog(LOG_WARNING,
+                 "[obs-virtual-camera-delay] Virtual Camera has no selected "
+                 "video media; using the main OBS video output");
             originalVideo_ = obs_get_video();
+        }
         state_ = DelayState::StoppingForRewire;
         blog(LOG_INFO,
              "[obs-virtual-camera-delay] attaching timestamp delay to the "
@@ -243,14 +250,13 @@ private:
                 ClearDelayedVideoTarget();
                 DestroyDelayedView();
 
-                // obs_get_video() now points at the newly configured OBS
-                // video pipeline. Never feed frames from the old geometry
-                // into the rebuilt delayed view.
-                originalVideo_ = obs_get_video();
-                originalAudio_ = obs_get_audio();
+                // Keep the media captured when Virtual Camera was originally
+                // started. In particular, do not replace an Aitum Vertical
+                // canvas with obs_get_video() merely because the main OBS
+                // video pipeline emitted video_reset.
                 blog(LOG_INFO,
                      "[obs-virtual-camera-delay] rebuilding delayed pipeline "
-                     "after OBS video settings changed");
+                     "while preserving the selected Virtual Camera media");
             }
             StartDelayedPipeline();
             return;
@@ -267,10 +273,10 @@ private:
             return;
 
         // The delayed view and frame buffer were created for the previous
-        // geometry. Stop the built-in Virtual Camera first; its deactivate
-        // signal will rebuild both against the new OBS video output. This
-        // also handles orientation changes such as 1920x1080 -> 1080x1920
-        // without mixing frames from the two geometries.
+        // geometry. Stop the built-in Virtual Camera first and rebuild the
+        // delay path, but preserve originalVideo_: it is the actual media
+        // selected for Virtual Camera and may belong to Aitum Vertical rather
+        // than the main OBS canvas.
         pendingVideoReconfigure_ = true;
         state_ = DelayState::StoppingForRewire;
         blog(LOG_INFO,
