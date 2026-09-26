@@ -24,6 +24,8 @@ OBS selected VC media ---+
 - Hard queue limit of 768 MiB. A resolution/FPS/delay combination that would
   exceed it is clamped and reported in the OBS log.
 - Video only. Virtual Camera audio behavior remains controlled by OBS.
+- Custom Virtual Camera media geometry is preserved. This includes portrait
+  canvases such as Aitum Vertical at 1080x1920.
 
 HDR PQ/HLG is rejected for v0.1.0. Settings changes take effect on the next
 Virtual Camera start, not during an active run.
@@ -112,7 +114,9 @@ an NVIDIA GeForce 930MX with D3D11. The completed manual checks covered:
 - Google Meet using the normal **OBS Virtual Camera** device;
 - delay accuracy within one video frame at 720p30/3000 ms; and
 - a 30-minute 1080p60/3000 ms run with zero feeder drops and memory reclaimed
-  after stop.
+  after stop; and
+- Aitum Vertical as the selected Virtual Camera media at 1080x1920, preserving
+  the portrait geometry through the delayed output.
 
 Runtime HDR rejection was not part of the manual matrix; HDR PQ/HLG remains an
 explicitly unsupported configuration guarded by the implementation and tests.
